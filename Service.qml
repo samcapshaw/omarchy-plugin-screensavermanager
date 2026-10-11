@@ -143,6 +143,26 @@ Item {
     }
   }
 
+  // Quickshell's IdleMonitor keeps the timeout it was armed with: changing
+  // `timeout` later does nothing until the monitor is disabled and enabled
+  // again. Omarchy's idle service only updates the timeout, so a new idle
+  // timing (from this panel, PowerCore or a hand edit of shell.json) would
+  // not take effect until the shell restarts. Flipping stay-awake on and off
+  // in one turn, without persisting it, re-arms the monitor with the new
+  // timeout. Left alone while stay-awake is really on.
+  function rearmIdle() {
+    var idle = root.idleService
+    if (!idle || idle.stayAwake || typeof idle.applyStayAwake !== "function") return
+    idle.applyStayAwake(true, false, "screensaver-manager re-arm")
+    idle.applyStayAwake(false, false, "screensaver-manager re-arm")
+  }
+
+  Connections {
+    target: root.idleService
+    ignoreUnknownSignals: true
+    function onFirstIdleTimeoutSecondsChanged() { Qt.callLater(root.rearmIdle) }
+  }
+
   Process {
     id: idleProc
     command: [root.cli, "idle-launch", "--marker=org.omarchy.screensaver"]

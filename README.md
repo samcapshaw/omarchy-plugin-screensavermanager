@@ -88,6 +88,8 @@ The plugin's screensaver windows use Omarchy's own window class (`org.omarchy.sc
 
 If you choose Omarchy's screensaver with every effect on and the default 120 fps, the plugin does nothing at idle and Omarchy's launcher runs as usual. If a screensaver you chose is uninstalled later, Omarchy's screensaver runs instead.
 
+Changing the idle timeout normally needs a shell restart. Omarchy's idle service only updates its idle monitor's timeout, and Quickshell's idle monitor keeps the timeout it was started with until it's re-armed. While this plugin is enabled, its service re-arms the monitor whenever the timeout changes, whether from the panel, PowerCore or a hand edit of `shell.json`.
+
 Omarchy's own toggle (*Trigger > Toggle > Screensaver*, or the switch in the panel) still turns the screensaver off completely. The plugin respects it, and it never starts a screensaver while the screen is locked.
 
 ### Where things are stored

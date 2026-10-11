@@ -1,0 +1,137 @@
+{
+  "version": 1,
+  "savers": [
+    {
+      "id": "cmatrix",
+      "name": "cmatrix",
+      "description": "The classic Matrix digital rain",
+      "bins": ["cmatrix"],
+      "command": "cmatrix -ab",
+      "package": "cmatrix",
+      "repo": "extra",
+      "license": "GPL-3.0",
+      "url": "https://github.com/abishekvashok/cmatrix"
+    },
+    {
+      "id": "unimatrix",
+      "name": "unimatrix",
+      "description": "Matrix rain with half-width katakana",
+      "bins": ["unimatrix"],
+      "command": "unimatrix -a -s 96",
+      "package": "unimatrix-git",
+      "repo": "aur",
+      "license": "GPL-3.0",
+      "url": "https://github.com/will8211/unimatrix"
+    },
+    {
+      "id": "neo-matrix",
+      "name": "neo",
+      "description": "Matrix rain with Unicode glitches",
+      "bins": ["neo-matrix"],
+      "command": "neo-matrix --async",
+      "package": "neo-matrix",
+      "repo": "aur",
+      "license": "GPL-3.0",
+      "url": "https://github.com/st3w/neo"
+    },
+    {
+      "id": "tmatrix",
+      "name": "TMatrix",
+      "description": "Matrix rain that reveals a title",
+      "bins": ["tmatrix"],
+      "command": "tmatrix",
+      "package": "tmatrix",
+      "repo": "aur",
+      "license": "GPL-2.0",
+      "url": "https://github.com/M4444/TMatrix"
+    },
+    {
+      "id": "cxxmatrix",
+      "name": "cxxmatrix",
+      "description": "Matrix rain, Conway's game of life and a Mandelbrot zoom",
+      "bins": ["cxxmatrix"],
+      "command": "cxxmatrix",
+      "package": "cxxmatrix-git",
+      "repo": "aur",
+      "license": "MIT",
+      "url": "https://github.com/akinomyoga/cxxmatrix"
+    },
+    {
+      "id": "pipes-sh",
+      "name": "pipes.sh",
+      "description": "Animated pipes growing across the screen",
+      "bins": ["pipes.sh"],
+      "command": "pipes.sh -p 3 -r 4000",
+      "package": "pipes.sh",
+      "repo": "aur",
+      "license": "MIT",
+      "url": "https://github.com/pipeseroni/pipes.sh"
+    },
+    {
+      "id": "pipes-rs",
+      "name": "pipes-rs",
+      "description": "A faster pipes in Rust",
+      "bins": ["pipes-rs"],
+      "command": "pipes-rs",
+      "package": "pipes-rs",
+      "repo": "aur",
+      "license": "BlueOak-1.0.0",
+      "url": "https://github.com/lhvy/pipes-rs"
+    },
+    {
+      "id": "asciiquarium",
+      "name": "asciiquarium",
+      "description": "An aquarium of ASCII fish",
+      "bins": ["asciiquarium"],
+      "command": "asciiquarium",
+      "package": "asciiquarium",
+      "repo": "extra",
+      "license": "GPL-2.0-or-later",
+      "url": "https://robobunny.com/projects/asciiquarium/"
+    },
+    {
+      "id": "cbonsai",
+      "name": "cbonsai",
+      "description": "A bonsai tree that grows forever",
+      "bins": ["cbonsai"],
+      "command": "cbonsai -l -i -w 2",
+      "package": "cbonsai",
+      "repo": "aur",
+      "license": "GPL-3.0",
+      "url": "https://gitlab.com/jallbrit/cbonsai"
+    },
+    {
+      "id": "astroterm",
+      "name": "astroterm",
+      "description": "The night sky above you, live",
+      "bins": ["astroterm"],
+      "command": "astroterm -c -C -u",
+      "package": "astroterm",
+      "repo": "extra",
+      "license": "MIT",
+      "url": "https://github.com/da-luce/astroterm"
+    },
+    {
+      "id": "nyancat",
+      "name": "Nyan Cat",
+      "description": "Nyan Cat, forever",
+      "bins": ["nyancat"],
+      "command": "nyancat -n -s",
+      "package": "nyancat",
+      "repo": "extra",
+      "license": "NCSA",
+      "url": "https://github.com/klange/nyancat"
+    },
+    {
+      "id": "genact",
+      "name": "genact",
+      "description": "Looks busy: fake compiles, downloads and more",
+      "bins": ["genact"],
+      "command": "genact",
+      "package": "genact",
+      "repo": "extra",
+      "license": "MIT",
+      "url": "https://github.com/svenstaro/genact"
+    }
+  ]
+}

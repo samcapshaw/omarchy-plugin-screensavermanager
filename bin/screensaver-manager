@@ -1,0 +1,723 @@
+#!/bin/bash
+
+# screensaver-manager: choose, preview and launch Omarchy screensavers.
+#
+# The Screensaver Manager plugin's panel drives everything through this script,
+# and it works on its own from a terminal or a keybinding too. Run it without
+# arguments for usage.
+#
+# The fullscreen launcher and runner follow Omarchy's own
+# omarchy-launch-screensaver and omarchy-screensaver (MIT, (c) David Heinemeier
+# Hansson), so a managed screensaver behaves exactly like the stock one: same
+# window class, same terminals, and it exits on a key press or loss of focus.
+
+set -uo pipefail
+
+PLUGIN_ID="io.github.whiskeytangofussell.screensavermanager"
+SELF=$(readlink -f "${BASH_SOURCE[0]}")
+PLUGIN_DIR=$(dirname "$(dirname "$SELF")")
+CATALOG="$PLUGIN_DIR/catalog.json"
+CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+CONFIG="${SSM_CONFIG:-$CONFIG_HOME/omarchy/screensaver-manager.json}"
+BRANDING="$CONFIG_HOME/omarchy/branding/screensaver.txt"
+OMARCHY_PATH="${OMARCHY_PATH:-$HOME/.local/share/omarchy}"
+TOGGLE_OFF="$HOME/.local/state/omarchy/toggles/screensaver-off"
+MENU_FILE="$CONFIG_HOME/omarchy/extensions/omarchy-menu.jsonc"
+CLI_LINK="$HOME/.local/bin/screensaver-manager"
+
+SCREENSAVER_CLASS="org.omarchy.screensaver"
+PREVIEW_CLASS="$PLUGIN_ID.preview"
+DEFAULT_FRAME_RATE=120
+MENU_BEGIN="// >>> screensaver-manager (added by the Screensaver Manager plugin; remove with: screensaver-manager menu remove)"
+MENU_END="// <<< screensaver-manager"
+
+die() {
+  echo "screensaver-manager: $*" >&2
+  exit 1
+}
+
+# ------------------------------------------------------------------ config
+
+# The config with every field present. A missing or unreadable file reads as
+# the defaults, which is the stock Omarchy screensaver.
+config() {
+  local raw='{}'
+  [[ -r $CONFIG ]] && raw=$(cat "$CONFIG" 2>/dev/null)
+  jq -c --argjson fr "$DEFAULT_FRAME_RATE" '
+    (if type == "object" then . else {} end) as $c |
+    {
+      version: 1,
+      selected: ($c.selected // "omarchy" | tostring),
+      disabledEffects: ([$c.disabledEffects[]? | strings] | unique),
+      frameRate: (($c.frameRate // $fr) | tonumber? // $fr),
+      custom: [$c.custom[]? | select(type == "object" and (.id | type) == "string" and (.command | type) == "string")]
+    }' <<<"$raw" 2>/dev/null || jq -nc --argjson fr "$DEFAULT_FRAME_RATE" \
+    '{version: 1, selected: "omarchy", disabledEffects: [], frameRate: $fr, custom: []}'
+}
+
+# Applies a jq filter to the config and writes it back atomically, so the
+# panel's file watcher never sees half a file.
+config_update() {
+  local filter="$1"
+  shift
+  local next dir tmp
+  next=$(config | jq "$@" "$filter") || die "could not update the config"
+  dir=$(dirname "$CONFIG")
+  mkdir -p "$dir"
+  tmp=$(mktemp "$dir/.screensaver-manager.XXXXXX")
+  printf '%s\n' "$next" >"$tmp" && mv "$tmp" "$CONFIG"
+  notify_panel
+}
+
+# ----------------------------------------------------------------- effects
+
+# Every effect the installed ttfx offers, read from its help so new effects
+# show up without a plugin update.
+all_effects() {
+  ttfx --help 2>/dev/null | awk '
+    /^Commands:/ { listing = 1; next }
+    listing && /^[^ ]/ { exit }
+    listing && NF && $1 != "help" { print $1 }
+  '
+}
+
+enabled_effects() {
+  local disabled
+  disabled=$(config | jq -r '.disabledEffects[]')
+  all_effects | grep -vxF -f <(printf '%s\n' "$disabled") || true
+}
+
+effects_json() {
+  local disabled
+  disabled=$(config | jq -c '.disabledEffects')
+  all_effects | jq -R . | jq -sc --argjson off "$disabled" \
+    'map({name: ., enabled: (. as $e | $off | index($e) | not)})'
+}
+
+valid_effect() {
+  all_effects | grep -qxF -- "$1"
+}
+
+# ------------------------------------------------------------------ savers
+
+installed_bin() {
+  local bin
+  for bin in "$@"; do
+    command -v "$bin" >/dev/null 2>&1 && return 0
+  done
+  return 1
+}
+
+# Every screensaver the plugin knows: Omarchy's own, the catalog of known
+# terminal screensavers (installed or not) and the user's custom commands.
+savers_json() {
+  local installed=() id bins
+  while IFS=$'\t' read -r id bins; do
+    # shellcheck disable=SC2086
+    installed_bin $bins && installed+=("$id")
+  done < <(jq -r '.savers[] | [.id, (.bins | join(" "))] | @tsv' "$CATALOG")
+
+  jq -nc \
+    --slurpfile catalog "$CATALOG" \
+    --argjson config "$(config)" \
+    --argjson installed "$(printf '%s\n' "${installed[@]}" | jq -R 'select(length > 0)' | jq -sc .)" '
+    def install_cmd: if .repo == "aur" then "yay -S --needed \(.package)" else "sudo pacman -S --needed \(.package)" end;
+    [
+      {id: "omarchy", name: "Omarchy", description: "Text effects over your screensaver branding",
+       kind: "omarchy", installed: true, command: "ttfx"}
+    ]
+    + [$catalog[0].savers[] | {id, name, description, kind: "catalog",
+        installed: (.id as $id | $installed | index($id) != null),
+        command, package, repo, license, url, install: install_cmd}]
+    + [$config.custom[] | {id: ("custom:" + .id), name: (.name // .id), description: .command,
+        kind: "custom", installed: true, command}]
+    | map(. + {selected: (.id == $config.selected)})'
+}
+
+saver_json() {
+  savers_json | jq -c --arg id "$1" 'map(select(.id == $id)) | first // empty'
+}
+
+# A stock setup needs no help from the plugin: Omarchy's own launcher already
+# runs exactly this, so the service leaves the idle launch alone.
+managed() {
+  config | jq -e --argjson fr "$DEFAULT_FRAME_RATE" \
+    '.selected != "omarchy" or (.disabledEffects | length) > 0 or .frameRate != $fr' >/dev/null
+}
+
+status_json() {
+  local cfg savers effects
+  cfg=$(config)
+  savers=$(savers_json)
+  effects=$(effects_json)
+  jq -nc \
+    --argjson cfg "$cfg" --argjson savers "$savers" --argjson effects "$effects" \
+    --argjson managed "$(managed && echo true || echo false)" \
+    --argjson enabled "$([[ -f $TOGGLE_OFF ]] && echo false || echo true)" \
+    --argjson menu "$(menu_installed && echo true || echo false)" \
+    --argjson cli "$(cli_installed && echo true || echo false)" \
+    --arg pluginDir "$PLUGIN_DIR" '
+    ($savers | map(select(.id == $cfg.selected)) | first) as $sel |
+    {
+      selected: $cfg.selected,
+      selectedName: ($sel.name // $cfg.selected),
+      selectedAvailable: ($sel.installed // false),
+      managed: $managed,
+      screensaverEnabled: $enabled,
+      frameRate: $cfg.frameRate,
+      effectsEnabled: ($effects | map(select(.enabled)) | length),
+      effectsTotal: ($effects | length),
+      menuInstalled: $menu,
+      cliInstalled: $cli,
+      pluginDir: $pluginDir,
+      savers: $savers,
+      effects: $effects
+    }'
+}
+
+# ----------------------------------------------------------------- running
+
+# The runner lives inside the screensaver terminal. --preview runs in the small
+# floating preview window instead, where it must not hide the cursor, watch
+# focus or tear down the real screensaver.
+run_saver() {
+  local id="" effect="" preview=false
+  while (($#)); do
+    case $1 in
+    --effect) effect=${2:-}; shift 2 ;;
+    --preview) preview=true; shift ;;
+    *) id=$1; shift ;;
+    esac
+  done
+  [[ -n $id ]] || id=$(config | jq -r .selected)
+
+  local saver
+  saver=$(saver_json "$id")
+  if [[ -z $saver || $(jq -r .installed <<<"$saver") != true ]]; then
+    # A selection that was uninstalled since falls back to Omarchy's own rather
+    # than leaving a black screen.
+    id=omarchy
+    saver=$(saver_json omarchy)
+  fi
+
+  printf '\033]11;rgb:00/00/00\007'
+  printf '\033[?25l'
+
+  child=""
+  stop_child() {
+    [[ -n $child ]] && kill "$child" 2>/dev/null
+    pkill -P $$ 2>/dev/null
+    child=""
+  }
+
+  if [[ $preview == true ]]; then
+    trap 'stop_child; exit 0' SIGINT SIGTERM SIGHUP SIGQUIT EXIT
+  else
+    exit_screensaver() {
+      trap - EXIT
+      stop_child
+      hyprctl eval 'hl.config({ cursor = { invisible = false } })' &>/dev/null || hyprctl keyword cursor:invisible false &>/dev/null || true
+      pkill -f "[o]rg.omarchy.screensaver" 2>/dev/null
+      exit 0
+    }
+    trap exit_screensaver SIGINT SIGTERM SIGHUP SIGQUIT EXIT
+    hyprctl eval 'hl.config({ cursor = { invisible = true } })' &>/dev/null || hyprctl keyword cursor:invisible true &>/dev/null
+  fi
+
+  wait_for_terminal_resize
+
+  local kind command args=()
+  kind=$(jq -r .kind <<<"$saver")
+  command=$(jq -r .command <<<"$saver")
+
+  if [[ $kind == omarchy ]]; then
+    local frame_rate effects=()
+    frame_rate=$(config | jq -r .frameRate)
+    local input=$BRANDING
+    [[ -r $input ]] || input="$OMARCHY_PATH/logo.txt"
+    args=(-i "$input" --frame-rate "$frame_rate" --canvas-width 0 --canvas-height 0 --reuse-canvas
+      --anchor-canvas c --anchor-text c --no-eol --no-restore-cursor)
+    if [[ -n $effect ]]; then
+      valid_effect "$effect" || die "unknown effect: $effect"
+      args+=("$effect")
+    else
+      mapfile -t effects < <(enabled_effects)
+      ((${#effects[@]})) || mapfile -t effects < <(all_effects)
+      args+=(--random-effect --include-effects "${effects[@]}")
+    fi
+  fi
+
+  while true; do
+    if [[ $kind == omarchy ]]; then
+      ttfx "${args[@]}" &
+    else
+      # The screensaver gets no stdin, so every key press lands here and
+      # dismisses it the same way it dismisses Omarchy's own.
+      bash -c "$command" </dev/null &
+    fi
+    child=$!
+
+    while kill -0 "$child" 2>/dev/null; do
+      if [[ $preview == true ]]; then
+        # Waiting on a background sleep lets the hangup from a closing preview
+        # window run the trap at once instead of after the sleep.
+        sleep 1 &
+        wait $!
+      elif read -rsn1 -t 1 || ! screensaver_in_focus; then
+        exit_screensaver
+      fi
+    done
+    child=""
+
+    # A screensaver that exits on its own is restarted, with a breather so one
+    # that fails at once does not spin.
+    [[ $kind == omarchy ]] || sleep 1
+  done
+}
+
+# A screensaver terminal is up, or another launcher is on its way. This
+# script's own launcher processes carry the class in their arguments too (see
+# idle_launch), so they are left out by name.
+screensaver_running() {
+  pgrep -af '[o]rg.omarchy.screensaver' | awk '$3 !~ /screensaver-manager$/ { found = 1 } END { exit !found }'
+}
+
+screensaver_in_focus() {
+  hyprctl activewindow -j | jq -e --arg c "$SCREENSAVER_CLASS" '.class == $c' >/dev/null 2>&1
+}
+
+# Terminals map at 80x24 and resize once the compositor sizes the window; a
+# canvas measured before that lands in the corner. See omarchy-screensaver.
+wait_for_terminal_resize() {
+  local deadline=$((SECONDS + 2))
+  while ((SECONDS < deadline)) && [[ $(stty size 2>/dev/null) == "24 80" ]]; do
+    sleep 0.02
+  done
+}
+
+hypr_focus_monitor() {
+  hyprctl dispatch "hl.dsp.focus({ monitor = \"$1\" })" >/dev/null 2>&1 || hyprctl dispatch focusmonitor "$1" >/dev/null
+}
+
+hypr_exec() {
+  local command
+  printf -v command '%q ' "$@"
+  hyprctl dispatch "hl.dsp.exec_cmd([[$command]])" >/dev/null 2>&1 || hyprctl dispatch exec -- bash -lc "$command" >/dev/null
+}
+
+terminal_id() {
+  local terminal
+  terminal=$(xdg-terminal-exec --print-id 2>/dev/null)
+  case $terminal in
+  *Alacritty* | *ghostty* | *foot* | *kitty*) echo "$terminal" ;;
+  *) return 1 ;;
+  esac
+}
+
+# Starts a terminal with the given class running the given command. The font
+# size is the only thing that differs between the fullscreen screensaver and
+# the preview, so it is the one knob.
+spawn_terminal() {
+  local class=$1 font_size=$2
+  shift 2
+  local terminal
+  terminal=$(terminal_id) || return 1
+
+  # Hyprland starts the terminal, so a config override has to ride along.
+  [[ -n ${SSM_CONFIG:-} ]] && set -- env SSM_CONFIG="$SSM_CONFIG" "$@"
+
+  # The preview sits over other windows and should read as a solid screen.
+  local solid=false
+  [[ $class == "$PREVIEW_CLASS" ]] && solid=true
+
+  case $terminal in
+  *Alacritty*)
+    hypr_exec alacritty --class="$class" --config-file "$OMARCHY_PATH/default/alacritty/screensaver.toml" \
+      ${font_size:+-o "font.size=$font_size"} $([[ $solid == true ]] && echo "-o window.opacity=1") -e "$@"
+    ;;
+  *ghostty*)
+    hypr_exec ghostty --class="$class" --config-file="$OMARCHY_PATH/default/ghostty/screensaver" \
+      --font-size="${font_size:-18}" $([[ $solid == true ]] && echo "--background-opacity=1") \
+      $([[ $solid == true ]] && ghostty +show-config --default 2>/dev/null | grep -q '^scrollbar' && echo "--scrollbar=never") \
+      -e "$@"
+    ;;
+  *foot*)
+    hypr_exec foot --app-id="$class" --config="$OMARCHY_PATH/default/foot/screensaver.ini" \
+      ${font_size:+--override "main.font=monospace:size=$font_size"} "$@"
+    ;;
+  *kitty*)
+    hypr_exec kitty --class="$class" --override font_size="${font_size:-18}" --override window_padding_width=0 \
+      $([[ $solid == true ]] && echo "--override background_opacity=1") "$@"
+    ;;
+  esac
+}
+
+# Fullscreen on every monitor, like omarchy-launch-screensaver. The class is
+# Omarchy's own, so its fullscreen rules apply and the idle service treats it
+# as the screensaver: the lock still follows, and dismissing it counts as
+# activity.
+launch() {
+  local id=${1:-}
+
+  screensaver_running && return 0
+  if ! terminal_id >/dev/null; then
+    omarchy-notification-send -g ✋ "Screensaver only runs in Alacritty, Foot, Ghostty, or Kitty" 2>/dev/null
+    return 1
+  fi
+
+  local focused socket events
+  focused=$(hyprctl monitors -j | jq -r '.[] | select(.focused) | .name')
+  socket="$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock"
+  exec {events}< <(socat -U - "UNIX-CONNECT:$socket")
+
+  local monitor line deadline
+  for monitor in $(hyprctl monitors -j | jq -r '.[].name'); do
+    hypr_focus_monitor "$monitor"
+    spawn_terminal "$SCREENSAVER_CLASS" "" "$SELF" run ${id:+"$id"}
+
+    # Wait for this monitor's window before focusing the next, or slow
+    # terminals all pile onto the last monitor.
+    deadline=$((SECONDS + 5))
+    while ((SECONDS < deadline)) && IFS= read -r -t $((deadline - SECONDS)) -u "$events" line; do
+      [[ $line == openwindow\>\>*,$SCREENSAVER_CLASS,* ]] && break
+    done
+  done
+
+  hypr_focus_monitor "$focused"
+}
+
+# The idle path. The plugin's service calls this the moment Omarchy's idle
+# service decides to start the screensaver, ahead of the stock launcher. The
+# service passes --marker=org.omarchy.screensaver so this process matches the
+# stock launcher's "already running" check from its first instant, and the
+# stock launcher steps aside.
+idle_launch() {
+  [[ -f $TOGGLE_OFF ]] && return 0
+  [[ $(omarchy-shell lock isLocked 2>/dev/null) == "true" ]] && return 0
+  launch
+}
+
+# --------------------------------------------------------------- previews
+
+preview_stop() {
+  pkill -f "[${PREVIEW_CLASS:0:1}]${PREVIEW_CLASS:1}" 2>/dev/null
+  return 0
+}
+
+# Opens the small floating preview. The panel passes where its card sits so
+# the preview lands beside it; without coordinates it goes to the top right of
+# the focused monitor.
+preview() {
+  local id="" effect="" monitor="" x="" y="" width=480 height=270
+  while (($#)); do
+    case $1 in
+    --effect) effect=$2; shift 2 ;;
+    --monitor) monitor=$2; shift 2 ;;
+    --x) x=$2; shift 2 ;;
+    --y) y=$2; shift 2 ;;
+    --width) width=$2; shift 2 ;;
+    --height) height=$2; shift 2 ;;
+    *) id=$1; shift ;;
+    esac
+  done
+  [[ -n $id ]] || id=$(config | jq -r .selected)
+  [[ $width =~ ^[0-9]+$ && $height =~ ^[0-9]+$ ]] || die "width and height must be whole numbers"
+  [[ -z $x || $x =~ ^-?[0-9]+$ ]] && [[ -z $y || $y =~ ^-?[0-9]+$ ]] || die "x and y must be whole numbers"
+  terminal_id >/dev/null || die "previews need Alacritty, Foot, Ghostty or Kitty"
+
+  local mon
+  if [[ -n $monitor ]]; then
+    mon=$(hyprctl monitors -j | jq -c --arg m "$monitor" '.[] | select(.name == $m)')
+  fi
+  [[ -n ${mon:-} ]] || mon=$(hyprctl monitors -j | jq -c '.[] | select(.focused)')
+
+  # Hyprland places windows in layout coordinates, so turn the panel's
+  # monitor-local position into a global one.
+  local mx my mw
+  read -r mx my mw < <(jq -r '"\(.x) \(.y) \((.width / .scale) | floor)"' <<<"$mon")
+  [[ -n $x ]] || x=$((mw - width - 24))
+  [[ -n $y ]] || y=64
+  x=$((mx + x))
+  y=$((my + y))
+
+  # Fit the screensaver text into the preview. Across the supported terminals a
+  # cell comes out a little under one logical pixel wide per point of font size,
+  # and all of them take fractional sizes.
+  local cols=80 font_size
+  if [[ -r $BRANDING ]]; then
+    cols=$(LC_ALL=C.UTF-8 wc -L <"$BRANDING")
+  fi
+  ((cols < 40)) && cols=40
+  font_size=$(awk -v w="$width" -v c="$cols" 'BEGIN { s = w / (c + 2) / 0.95; if (s < 3) s = 3; if (s > 11) s = 11; printf "%.1f", s }')
+
+  preview_stop
+
+  hyprctl eval "if ssm_preview_rule then ssm_preview_rule:set_enabled(false) end; ssm_preview_rule = hl.window_rule({ match = { class = \"^${PREVIEW_CLASS//./\\\\.}\$\" }, float = true, pin = true, size = { $width, $height }, move = { $x, $y }, no_initial_focus = true, focus_on_activate = false, no_anim = true, opacity = \"1 override 1 override\", tag = \"-default-opacity\" })" >/dev/null 2>&1
+
+  local args=(run "$id" --preview)
+  [[ -n $effect ]] && args+=(--effect "$effect")
+  spawn_terminal "$PREVIEW_CLASS" "$font_size" "$SELF" "${args[@]}"
+}
+
+# ------------------------------------------------------------ integration
+
+menu_installed() {
+  [[ -f $MENU_FILE ]] && grep -qF "$MENU_BEGIN" "$MENU_FILE"
+}
+
+# Adds the plugin's rows to the user's Omarchy menu extensions, between marker
+# comments so removal takes back exactly what was added and nothing else.
+menu_install() {
+  menu_installed && { echo "Already in the Omarchy menu"; return 0; }
+  mkdir -p "$(dirname "$MENU_FILE")"
+  [[ -f $MENU_FILE ]] || printf '{\n}\n' >"$MENU_FILE"
+  grep -q '}' "$MENU_FILE" || die "$MENU_FILE has no closing brace; add the rows by hand"
+
+  local cmd="\$HOME/.config/omarchy/plugins/$PLUGIN_ID/bin/screensaver-manager"
+  local block
+  block=$(
+    cat <<EOF
+  $MENU_BEGIN
+  "style.screensaver.manager": {"icon":"󱄄","label":"Screensaver Manager","action":"$cmd panel"},
+  "system.screensaver": {"icon":"󱄄","label":"Screensaver","action":"$cmd launch"},
+  $MENU_END
+EOF
+  )
+
+  # Insert before the last closing brace in the file.
+  local tmp
+  tmp=$(mktemp "$(dirname "$MENU_FILE")/.omarchy-menu.XXXXXX")
+  awk -v block="$block" '
+    { lines[NR] = $0 }
+    /}/ { last = NR }
+    END {
+      for (i = 1; i <= NR; i++) {
+        if (i == last) {
+          pos = 0
+          for (j = length(lines[i]); j > 0; j--) if (substr(lines[i], j, 1) == "}") { pos = j; break }
+          before = substr(lines[i], 1, pos - 1)
+          if (before ~ /[^ \t]/) print before
+          print block
+          print substr(lines[i], pos)
+        } else print lines[i]
+      }
+    }' "$MENU_FILE" >"$tmp" && cat "$tmp" >"$MENU_FILE"
+  rm -f "$tmp"
+  echo "Added Screensaver Manager to the Omarchy menu (Style > Screensaver, and System > Screensaver)"
+}
+
+menu_remove() {
+  menu_installed || { echo "Not in the Omarchy menu"; return 0; }
+  local tmp
+  tmp=$(mktemp "$(dirname "$MENU_FILE")/.omarchy-menu.XXXXXX")
+  awk -v begin="$MENU_BEGIN" -v end="$MENU_END" '
+    index($0, begin) { skip = 1; next }
+    skip && index($0, end) { skip = 0; next }
+    !skip' "$MENU_FILE" >"$tmp" && cat "$tmp" >"$MENU_FILE"
+  rm -f "$tmp"
+  echo "Removed Screensaver Manager from the Omarchy menu"
+}
+
+cli_installed() {
+  [[ -f $CLI_LINK ]] && grep -qF "$PLUGIN_ID" "$CLI_LINK"
+}
+
+# A two-line wrapper rather than a symlink, so it keeps working if the plugin
+# directory is replaced, and removal can tell it is ours.
+cli_install() {
+  if [[ -e $CLI_LINK ]] && ! cli_installed; then
+    die "$CLI_LINK already exists and is not ours; leaving it alone"
+  fi
+  mkdir -p "$(dirname "$CLI_LINK")"
+  cat >"$CLI_LINK" <<EOF
+#!/bin/bash
+# Installed by the Omarchy Screensaver Manager plugin ($PLUGIN_ID).
+exec "\$HOME/.config/omarchy/plugins/$PLUGIN_ID/bin/screensaver-manager" "\$@"
+EOF
+  chmod +x "$CLI_LINK"
+  echo "Installed $CLI_LINK"
+}
+
+cli_remove() {
+  cli_installed || { echo "No screensaver-manager command of ours to remove"; return 0; }
+  rm -f "$CLI_LINK"
+  echo "Removed $CLI_LINK"
+}
+
+# ---------------------------------------------------------------- commands
+
+usage() {
+  cat <<EOF
+Usage: screensaver-manager <command> [arguments]
+
+  status [--json]              Show the current screensaver setup
+  list [--json]                List screensavers, installed or not
+  select <id>                  Use a screensaver (omarchy, cmatrix, custom:<id>, ...)
+  launch [<id>]                Start the screensaver now on every monitor
+  preview <id> [--effect E]    Open a small live preview (preview stop closes it)
+
+  effects [--json]             List Omarchy's text effects and whether each is on
+  effects on|off|toggle <effect>...
+  effects all|none             Turn every effect on, or all but one off
+  effects only <effect>...     Turn on just these effects
+  framerate <fps>              Frame rate of Omarchy's text effects (default $DEFAULT_FRAME_RATE)
+
+  custom add <name> <command>  Add any terminal command as a screensaver
+  custom remove <id>
+
+  panel                        Open the Screensaver Manager panel
+  menu install|remove          Add or remove the Omarchy menu entries
+  cli install|remove           Add or remove ~/.local/bin/screensaver-manager
+EOF
+}
+
+notify_panel() {
+  # Tell the panel to re-read its state. Harmless when the plugin is not on
+  # the bar, and skipped when run from the panel itself.
+  [[ -n ${SSM_FROM_PANEL:-} ]] && return 0
+  timeout 2 omarchy-shell "$PLUGIN_ID" refresh >/dev/null 2>&1 || true
+}
+
+cmd_effects() {
+  local action=${1:-list}
+  (($#)) && shift
+  local name
+  case $action in
+  list | --json)
+    if [[ $action == --json || ${1:-} == --json ]]; then
+      effects_json
+    else
+      effects_json | jq -r '.[] | (if .enabled then "[x] " else "[ ] " end) + .name'
+    fi
+    return
+    ;;
+  on | off | toggle | only)
+    (($#)) || die "name at least one effect"
+    for name in "$@"; do valid_effect "$name" || die "unknown effect: $name"; done
+    ;;
+  all | none) ;;
+  *) die "unknown effects action: $action" ;;
+  esac
+
+  local names
+  names=$(printf '%s\n' "$@" | jq -R 'select(length > 0)' | jq -sc .)
+  local all
+  all=$(all_effects | jq -R . | jq -sc .)
+  case $action in
+  on) config_update '.disabledEffects -= $n' --argjson n "$names" ;;
+  off) config_update '.disabledEffects = (.disabledEffects + $n | unique)' --argjson n "$names" ;;
+  toggle) config_update 'reduce $n[] as $e (.; if (.disabledEffects | index($e)) then .disabledEffects -= [$e] else .disabledEffects += [$e] end)' --argjson n "$names" ;;
+  only) config_update '.disabledEffects = ($all - $n)' --argjson n "$names" --argjson all "$all" ;;
+  all) config_update '.disabledEffects = []' ;;
+  none) config_update '.disabledEffects = $all[1:]' --argjson all "$all" ;;
+  esac
+
+  # The random rotation needs something to pick from.
+  if [[ -z $(enabled_effects) ]]; then
+    config_update '.disabledEffects = .disabledEffects[1:]'
+    echo "At least one effect has to stay on" >&2
+  fi
+}
+
+cmd_custom() {
+  local action=${1:-}
+  (($#)) && shift
+  case $action in
+  add)
+    (($# == 2)) || die "usage: screensaver-manager custom add <name> <command>"
+    local name=$1 command=$2 id
+    [[ -n ${name// /} && -n ${command// /} ]] || die "name and command can't be empty"
+    id=$(tr '[:upper:]' '[:lower:]' <<<"$name" | tr -cs 'a-z0-9' '-' | sed 's/^-*//; s/-*$//')
+    [[ -n $id ]] || id="saver"
+    local base=$id n=2
+    while config | jq -e --arg id "$id" '.custom | map(.id) | index($id)' >/dev/null; do
+      id="$base-$n"
+      ((n++))
+    done
+    config_update '.custom += [{id: $id, name: $name, command: $command}]' \
+      --arg id "$id" --arg name "$name" --arg command "$command"
+    echo "custom:$id"
+    ;;
+  remove)
+    (($# == 1)) || die "usage: screensaver-manager custom remove <id>"
+    local id=${1#custom:}
+    config_update '.custom |= map(select(.id != $id)) | if .selected == ("custom:" + $id) then .selected = "omarchy" else . end' --arg id "$id"
+    ;;
+  *) die "usage: screensaver-manager custom add|remove" ;;
+  esac
+}
+
+main() {
+  local command=${1:-}
+  (($#)) && shift
+
+  case $command in
+  status)
+    if [[ ${1:-} == --json ]]; then
+      status_json
+    else
+      status_json | jq -r '
+        "Screensaver: \(.selectedName)\(if .selectedAvailable then "" else " (not installed, Omarchy runs instead)" end)",
+        "Idle launch: \(if .screensaverEnabled then (if .managed then "this plugin" else "Omarchy (stock setup)" end) else "off (screensaver disabled)" end)",
+        "Effects: \(.effectsEnabled) of \(.effectsTotal) on, \(.frameRate) fps"'
+    fi
+    ;;
+  list)
+    if [[ ${1:-} == --json ]]; then
+      savers_json
+    else
+      savers_json | jq -r '.[] | (if .selected then "* " else "  " end) + .id + "\t" + .name +
+        (if .installed then "" else "\t(not installed: \(.install))" end)' | column -t -s $'\t'
+    fi
+    ;;
+  select)
+    (($# == 1)) || die "usage: screensaver-manager select <id>"
+    local saver
+    saver=$(saver_json "$1")
+    [[ -n $saver ]] || die "unknown screensaver: $1 (see: screensaver-manager list)"
+    [[ $(jq -r .installed <<<"$saver") == true ]] || die "$1 is not installed: $(jq -r .install <<<"$saver")"
+    config_update '.selected = $id' --arg id "$1"
+    ;;
+  effects) cmd_effects "$@" ;;
+  framerate)
+    [[ ${1:-} =~ ^[0-9]+$ ]] && (($1 >= 10 && $1 <= 240)) || die "frame rate must be between 10 and 240"
+    config_update '.frameRate = $fr' --argjson fr "$1"
+    ;;
+  custom) cmd_custom "$@" ;;
+  launch) launch "$@" ;;
+  idle-launch) idle_launch ;;
+  toggle-enabled)
+    # Omarchy's own toggle, so its notification and state stay the source of truth.
+    omarchy-toggle-screensaver
+    ;;
+  managed) managed ;;
+  run) run_saver "$@" ;;
+  preview)
+    if [[ ${1:-} == stop ]]; then preview_stop; else preview "$@"; fi
+    ;;
+  panel) omarchy-shell "$PLUGIN_ID" toggle >/dev/null 2>&1 || die "the Screensaver Manager widget is not on the bar (omarchy plugin enable $PLUGIN_ID)" ;;
+  menu)
+    case ${1:-} in
+    install) menu_install ;;
+    remove) menu_remove ;;
+    *) die "usage: screensaver-manager menu install|remove" ;;
+    esac
+    notify_panel
+    ;;
+  cli)
+    case ${1:-} in
+    install) cli_install ;;
+    remove) cli_remove ;;
+    *) die "usage: screensaver-manager cli install|remove" ;;
+    esac
+    notify_panel
+    ;;
+  "" | -h | --help | help) usage ;;
+  *)
+    usage >&2
+    exit 1
+    ;;
+  esac
+}
+
+main "$@"

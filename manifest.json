@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.whiskeytangofussell.screensavermanager",
+  "name": "Screensaver Manager",
+  "version": "0.1.0",
+  "author": "Fussell",
+  "license": "MIT",
+  "description": "Pick the screensaver Omarchy starts when idle: its own text effects, with each effect switched on or off, or an installed terminal screensaver like cmatrix, asciiquarium or pipes.sh. Live previews pop up beside the panel as you browse.",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Screensaver Manager",
+    "description": "Choose and preview screensavers, and switch Omarchy's screensaver effects on or off",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

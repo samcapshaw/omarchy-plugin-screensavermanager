@@ -23,6 +23,7 @@ const effects = [{ name: "beams", enabled: true }, { name: "matrix", enabled: fa
 
 same(M.installed(savers).map(s => s.id), ["omarchy", "cmatrix", "custom:clock"])
 same(M.missing(savers).map(s => s.id), ["pipes-sh"])
+same(M.catalog(savers).map(s => s.id), ["cmatrix", "pipes-sh"])
 assert.strictEqual(M.find(savers, "cmatrix").name, "cmatrix")
 assert.strictEqual(M.find(savers, "nope"), null)
 assert.strictEqual(M.enabledCount(effects), 1)
@@ -30,10 +31,10 @@ assert.strictEqual(M.enabledCount(effects), 1)
 same(M.parseKey("saver:custom:clock"), { type: "saver", id: "custom:clock" })
 same(M.parseKey("more"), { type: "more", id: "" })
 
-const closed = M.navKeys(M.installed(savers), M.missing(savers), false, effects)
+const closed = M.navKeys(M.installed(savers), M.catalog(savers), false, effects)
 same(closed, ["saver:omarchy", "saver:cmatrix", "saver:custom:clock", "more", "effect:beams", "effect:matrix"])
-const open = M.navKeys(M.installed(savers), M.missing(savers), true, [])
-same(open, ["saver:omarchy", "saver:cmatrix", "saver:custom:clock", "more", "missing:pipes-sh"])
+const open = M.navKeys(M.installed(savers), M.catalog(savers), true, [])
+same(open, ["saver:omarchy", "saver:cmatrix", "saver:custom:clock", "more", "catalog:cmatrix", "catalog:pipes-sh"])
 
 assert.strictEqual(M.step(closed, "saver:omarchy", 1), "saver:cmatrix")
 assert.strictEqual(M.step(closed, "saver:omarchy", -1), "saver:omarchy")

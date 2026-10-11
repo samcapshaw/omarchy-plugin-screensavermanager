@@ -100,6 +100,13 @@ Item {
     Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation", saver.install])
   }
 
+  // Removal works the same way: the user sees pacman's list of what goes and
+  // confirms it in the terminal.
+  function uninstall(saver) {
+    if (!saver || !saver.uninstall) return
+    Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation", saver.uninstall])
+  }
+
   function setIdleTimeout(seconds) {
     if (!shell || typeof shell.mutateShellConfig !== "function") return
     var value = Math.max(10, Math.round(seconds))

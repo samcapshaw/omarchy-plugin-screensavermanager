@@ -109,19 +109,37 @@ installed_bin() {
   return 1
 }
 
+# The package that owns the first of these programs found on PATH, which may
+# differ from the catalog's (a -git build, say). Empty when nothing owns it,
+# such as a program built by hand into ~/.local/bin, which pacman can't remove.
+owning_package() {
+  local bin path
+  for bin in "$@"; do
+    path=$(command -v "$bin" 2>/dev/null) || continue
+    pacman -Qqo "$path" 2>/dev/null | head -1
+    return
+  done
+}
+
 # Every screensaver the plugin knows: Omarchy's own, the catalog of known
 # terminal screensavers (installed or not) and the user's custom commands.
 savers_json() {
-  local installed=() id bins
+  local installed=() owners='{}' id bins owner
   while IFS=$'\t' read -r id bins; do
     # shellcheck disable=SC2086
-    installed_bin $bins && installed+=("$id")
+    if installed_bin $bins; then
+      installed+=("$id")
+      # shellcheck disable=SC2086
+      owner=$(owning_package $bins)
+      [[ -n $owner ]] && owners=$(jq -c --arg id "$id" --arg pkg "$owner" '. + {($id): $pkg}' <<<"$owners")
+    fi
   done < <(jq -r '.savers[] | [.id, (.bins | join(" "))] | @tsv' "$CATALOG")
 
   jq -nc \
     --slurpfile catalog "$CATALOG" \
     --argjson config "$(config)" \
-    --argjson installed "$(printf '%s\n' "${installed[@]}" | jq -R 'select(length > 0)' | jq -sc .)" '
+    --argjson installed "$(printf '%s\n' "${installed[@]}" | jq -R 'select(length > 0)' | jq -sc .)" \
+    --argjson owners "$owners" '
     def install_cmd: if .repo == "aur" then "yay -S --needed \(.package)" else "sudo pacman -S --needed \(.package)" end;
     [
       {id: "omarchy", name: "Omarchy", description: "Text effects over your screensaver branding",
@@ -129,7 +147,9 @@ savers_json() {
     ]
     + [$catalog[0].savers[] | {id, name, description, kind: "catalog",
         installed: (.id as $id | $installed | index($id) != null),
-        command, package, repo, license, url, install: install_cmd}]
+        command, package, repo, license, url, install: install_cmd,
+        owner: ($owners[.id] // null)}
+        | . + {uninstall: (if .installed and .owner then "sudo pacman -Rns \(.owner)" else null end)}]
     + [$config.custom[] | {id: ("custom:" + .id), name: (.name // .id), description: .command,
         kind: "custom", installed: true, command}]
     | map(. + {selected: (.id == $config.selected)})'

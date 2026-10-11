@@ -104,6 +104,10 @@ if [[ -n $missing ]]; then
   refute "uninstalled saver is refused" "$CLI" select "$missing" 2>/dev/null
 fi
 
+# Only installed catalog screensavers owned by a package offer removal.
+check "uninstalled savers offer no removal" [ "$("$CLI" list --json | jq '[.[] | select(.kind == "catalog" and (.installed | not) and .uninstall != null)] | length')" = 0 ]
+check "removal goes through pacman" [ "$("$CLI" list --json | jq '[.[] | select(.uninstall != null and (.uninstall | startswith("sudo pacman -Rns ") | not))] | length')" = 0 ]
+
 # A broken config file reads as defaults rather than failing.
 echo "not json" >"$XDG_CONFIG_HOME/omarchy/screensaver-manager.json"
 check "broken config reads as defaults" [ "$(json .selected)" = omarchy ]

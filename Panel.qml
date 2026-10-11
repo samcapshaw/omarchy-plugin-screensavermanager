@@ -26,6 +26,7 @@ Panel {
   readonly property var savers: service ? service.savers : []
   readonly property var installedSavers: Model.installed(savers)
   readonly property var missingSavers: Model.missing(savers)
+  readonly property var catalogSavers: Model.catalog(savers)
   readonly property var effects: service ? service.effects : []
   readonly property string selected: service ? service.selected : "omarchy"
   readonly property bool screensaverEnabled: service ? service.screensaverEnabled : true
@@ -41,7 +42,7 @@ Panel {
   property bool showMissing: false
   property bool addingCustom: false
 
-  readonly property var navKeys: Model.navKeys(installedSavers, missingSavers, showMissing, selected === "omarchy" ? effects : [])
+  readonly property var navKeys: Model.navKeys(installedSavers, catalogSavers, showMissing, selected === "omarchy" ? effects : [])
 
   function moveCursor(delta) {
     if (!cursorActive) {
@@ -61,7 +62,11 @@ Panel {
     var parsed = Model.parseKey(key || cursorKey)
     if (!service) return
     if (parsed.type === "saver") service.select(parsed.id)
-    else if (parsed.type === "missing") service.install(Model.find(savers, parsed.id))
+    else if (parsed.type === "catalog") {
+      var saver = Model.find(savers, parsed.id)
+      if (saver && saver.installed) service.uninstall(saver)
+      else service.install(saver)
+    }
     else if (parsed.type === "more") showMissing = !showMissing
     else if (parsed.type === "effect") service.toggleEffect(parsed.id)
   }
@@ -104,6 +109,15 @@ Panel {
     id: previewTimer
     interval: 350
     onTriggered: root.showPreview()
+  }
+
+  // Installs and removals finish in their own terminal, so keep the lists
+  // current while the panel is open.
+  Timer {
+    interval: 3000
+    repeat: true
+    running: root.opened
+    onTriggered: if (root.service) root.service.refresh()
   }
 
   onOpenedChanged: {
@@ -335,9 +349,9 @@ Panel {
               }
             }
 
-            // Known screensavers that are not installed yet.
+            // The known terminal screensavers, to install or remove.
             CursorSurface {
-              visible: root.missingSavers.length > 0
+              visible: root.catalogSavers.length > 0
               width: parent.width
               implicitHeight: moreText.implicitHeight + Style.spacing.lg
               hasCursor: root.cursorActive && root.cursorKey === "more"
@@ -350,7 +364,7 @@ Panel {
                 anchors.left: parent.left
                 anchors.leftMargin: Style.space(6)
                 anchors.verticalCenter: parent.verticalCenter
-                text: (root.showMissing ? "\u{F0140}" : "\u{F0142}") + "  Get more (" + root.missingSavers.length + ")"
+                text: (root.showMissing ? "\u{F0140}" : "\u{F0142}") + "  Get more" + (root.missingSavers.length > 0 ? " (" + root.missingSavers.length + " to install)" : "")
                 color: root.dim
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall
@@ -366,9 +380,9 @@ Panel {
             }
 
             Repeater {
-              model: root.showMissing ? root.missingSavers : []
+              model: root.showMissing ? root.catalogSavers : []
 
-              MissingRow {
+              CatalogRow {
                 required property var modelData
                 width: column.width
                 saver: modelData
@@ -765,31 +779,41 @@ Panel {
     }
   }
 
-  // A known screensaver that is not installed: click opens a terminal with
-  // the install command, where the user confirms it themselves.
-  component MissingRow: CursorSurface {
-    id: missingRow
+  // A known terminal screensaver, installed or not. The download and delete
+  // buttons each open a terminal with the package manager command, where the
+  // user confirms (or cancels) it themselves; nothing is installed or removed
+  // from here directly.
+  component CatalogRow: CursorSurface {
+    id: catalogRow
     required property var saver
-    readonly property string key: Model.missingKey(saver.id)
+    readonly property string key: Model.catalogKey(saver.id)
+    readonly property bool isInstalled: saver.installed === true
+    readonly property bool canRemove: isInstalled && !!saver.uninstall
 
     hasCursor: root.cursorActive && root.cursorKey === key
     foreground: root.fg
     fill: root.hoverFill
-    implicitHeight: missingInner.implicitHeight + Style.spacing.lg
+    implicitHeight: catalogInner.implicitHeight + Style.spacing.lg
+
+    MouseArea {
+      anchors.fill: parent
+      hoverEnabled: true
+      onContainsMouseChanged: if (containsMouse) root.hover(catalogRow.key)
+    }
 
     Row {
-      id: missingInner
+      id: catalogInner
       anchors.left: parent.left
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
       anchors.leftMargin: Style.space(6)
-      anchors.rightMargin: Style.space(6)
+      anchors.rightMargin: Style.space(2)
       spacing: Style.space(8)
 
       Text {
         textFormat: Text.PlainText
-        text: "\u{F01DA}"
-        color: root.dim
+        text: Model.saverGlyph(catalogRow.saver)
+        color: catalogRow.isInstalled ? root.fg : root.dim
         font.family: root.fontFamily
         font.pixelSize: Style.font.title
         width: Style.space(22)
@@ -798,12 +822,12 @@ Panel {
       }
 
       Column {
-        width: parent.width - Style.space(22) - parent.spacing
+        width: parent.width - Style.space(22) - catalogActions.width - parent.spacing * 2
         anchors.verticalCenter: parent.verticalCenter
 
         Text {
           textFormat: Text.PlainText
-          text: missingRow.saver.name + "  ·  " + missingRow.saver.description
+          text: catalogRow.saver.name + "  ·  " + catalogRow.saver.description
           width: parent.width
           elide: Text.ElideRight
           color: root.fg
@@ -813,7 +837,9 @@ Panel {
 
         Text {
           textFormat: Text.PlainText
-          text: missingRow.saver.install + (missingRow.saver.repo === "aur" ? "  (AUR)" : "")
+          text: catalogRow.isInstalled
+            ? "Installed" + (catalogRow.saver.owner ? " · " + catalogRow.saver.owner : " · not from a package")
+            : catalogRow.saver.install + (catalogRow.saver.repo === "aur" ? "  (AUR)" : "")
           width: parent.width
           elide: Text.ElideRight
           color: root.dim
@@ -821,14 +847,38 @@ Panel {
           font.pixelSize: Style.font.caption
         }
       }
-    }
 
-    MouseArea {
-      anchors.fill: parent
-      hoverEnabled: true
-      cursorShape: Qt.PointingHandCursor
-      onContainsMouseChanged: if (containsMouse) root.hover(missingRow.key)
-      onClicked: root.activate(missingRow.key)
+      Row {
+        id: catalogActions
+        anchors.verticalCenter: parent.verticalCenter
+        spacing: Style.space(2)
+
+        PanelActionButton {
+          iconText: "\u{F01DA}"
+          fontSize: Style.font.body
+          foreground: root.fg
+          fontFamily: root.fontFamily
+          enabled: !catalogRow.isInstalled
+          opacity: enabled ? 1.0 : 0.3
+          tooltipText: "Install " + catalogRow.saver.name
+          onHovered: function(h) { if (h) root.hover(catalogRow.key) }
+          onClicked: if (root.service) root.service.install(catalogRow.saver)
+        }
+
+        PanelActionButton {
+          iconText: "\u{F0A7A}"
+          fontSize: Style.font.body
+          foreground: root.fg
+          fontFamily: root.fontFamily
+          enabled: catalogRow.canRemove
+          opacity: enabled ? 1.0 : 0.3
+          tooltipText: catalogRow.isInstalled && !catalogRow.canRemove
+            ? "Not installed from a package, remove it by hand"
+            : "Remove " + catalogRow.saver.name
+          onHovered: function(h) { if (h) root.hover(catalogRow.key) }
+          onClicked: if (root.service) root.service.uninstall(catalogRow.saver)
+        }
+      }
     }
   }
 }

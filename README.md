@@ -11,7 +11,7 @@ Choose the screensaver Omarchy starts when your computer goes idle. You can keep
 - **Live previews.** Move the mouse or the keyboard cursor onto a screensaver or an effect, and a small preview window runs it beside the panel. The preview closes when you close the panel.
 - **Timing.** Set how long the computer is idle before the screensaver starts, and the frame rate of Omarchy's effects.
 - **Dismiss on mouse movement.** Omarchy's own screensaver only closes on a key press, or when it loses focus to another monitor. With this on (the default), moving the mouse or trackpad closes it too.
-- **Get more screensavers.** The panel lists known terminal screensavers you don't have yet. Click one to open a terminal with its install command, which you confirm yourself. The plugin never installs anything on its own.
+- **Install and remove screensavers.** *Get more* lists every known terminal screensaver, with a download button and a delete button side by side. Download opens a terminal with the install command, and delete opens one with `sudo pacman -Rns` for the package that owns the screensaver. Either way you confirm (or cancel) it in the terminal; the plugin never installs or removes anything itself.
 - **Start now.** Starts the screensaver straight away. You can also right-click the bar icon.
 - **Omarchy menu and a terminal command (optional).** One button adds the panel to the Omarchy menu, and another installs a `screensaver-manager` command. Both are off until you turn them on.
 

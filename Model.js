@@ -11,6 +11,11 @@ function missing(savers) {
   return (savers || []).filter(function(s) { return s && !s.installed })
 }
 
+// The known terminal screensavers from catalog.json, installed or not.
+function catalog(savers) {
+  return (savers || []).filter(function(s) { return s && s.kind === "catalog" })
+}
+
 function find(savers, id) {
   var list = savers || []
   for (var i = 0; i < list.length; i++) if (list[i] && list[i].id === id) return list[i]
@@ -28,7 +33,7 @@ function enabledCount(effects) {
 // pointing at a stale index.
 
 function saverKey(id) { return "saver:" + id }
-function missingKey(id) { return "missing:" + id }
+function catalogKey(id) { return "catalog:" + id }
 function effectKey(name) { return "effect:" + name }
 
 function parseKey(key) {
@@ -38,12 +43,12 @@ function parseKey(key) {
   return { type: text.slice(0, colon), id: text.slice(colon + 1) }
 }
 
-function navKeys(installedSavers, missingSavers, showMissing, effects) {
+function navKeys(installedSavers, catalogSavers, showCatalog, effects) {
   var keys = []
   ;(installedSavers || []).forEach(function(s) { keys.push(saverKey(s.id)) })
-  if ((missingSavers || []).length > 0) {
+  if ((catalogSavers || []).length > 0) {
     keys.push("more")
-    if (showMissing) missingSavers.forEach(function(s) { keys.push(missingKey(s.id)) })
+    if (showCatalog) catalogSavers.forEach(function(s) { keys.push(catalogKey(s.id)) })
   }
   ;(effects || []).forEach(function(e) { keys.push(effectKey(e.name)) })
   return keys
@@ -83,8 +88,8 @@ function heroMeta(state) {
 // Lets node load this file for tests; QML ignores it.
 if (typeof module !== "undefined") {
   module.exports = {
-    installed: installed, missing: missing, find: find, enabledCount: enabledCount,
-    saverKey: saverKey, missingKey: missingKey, effectKey: effectKey, parseKey: parseKey,
+    installed: installed, missing: missing, catalog: catalog, find: find, enabledCount: enabledCount,
+    saverKey: saverKey, catalogKey: catalogKey, effectKey: effectKey, parseKey: parseKey,
     navKeys: navKeys, step: step, saverGlyph: saverGlyph, heroMeta: heroMeta
   }
 }

@@ -22,6 +22,11 @@ function find(savers, id) {
   return null
 }
 
+// Omarchy's own screensaver in either form: stock colors or Theme Match.
+function isOmarchy(id) {
+  return id === "omarchy" || id === "omarchy-theme"
+}
+
 function enabledCount(effects) {
   return (effects || []).filter(function(e) { return e && e.enabled }).length
 }
@@ -68,6 +73,7 @@ function step(keys, current, delta) {
 
 function saverGlyph(saver) {
   if (!saver) return ""
+  if (saver.id === "omarchy-theme") return "\u{F03D8}" // palette
   if (saver.kind === "omarchy") return "\u{F1104}"   // monitor-shimmer
   if (saver.kind === "custom") return "\u{F018D}"    // console
   return "\u{F07B7}"                                 // console-line
@@ -77,7 +83,7 @@ function heroMeta(state) {
   if (!state || !state.selected) return ""
   if (state.screensaverEnabled === false) return "Turned off"
   var name = state.selectedName || state.selected
-  if (state.selected === "omarchy") {
+  if (isOmarchy(state.selected)) {
     var total = state.effectsTotal || 0
     var on = state.effectsEnabled || 0
     return name + (on < total ? " · " + on + " of " + total + " effects" : " · all effects")
@@ -88,7 +94,7 @@ function heroMeta(state) {
 // Lets node load this file for tests; QML ignores it.
 if (typeof module !== "undefined") {
   module.exports = {
-    installed: installed, missing: missing, catalog: catalog, find: find, enabledCount: enabledCount,
+    installed: installed, missing: missing, catalog: catalog, find: find, isOmarchy: isOmarchy, enabledCount: enabledCount,
     saverKey: saverKey, catalogKey: catalogKey, effectKey: effectKey, parseKey: parseKey,
     navKeys: navKeys, step: step, saverGlyph: saverGlyph, heroMeta: heroMeta
   }

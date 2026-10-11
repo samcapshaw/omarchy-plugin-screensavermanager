@@ -6,7 +6,8 @@ Choose the screensaver Omarchy starts when your computer goes idle. You can keep
 
 ## What it does
 
-- **Choose a screensaver.** The choices are Omarchy's own, any known terminal screensaver you have installed, or any terminal command you add yourself.
+- **Choose a screensaver.** The choices are Omarchy's own, *Omarchy (Theme Match)*, any known terminal screensaver you have installed, or any terminal command you add yourself.
+- **Omarchy (Theme Match).** Omarchy's screensaver in your active theme's colors, on the theme's background. The text settles into a ramp of the theme's accent, cyan and foreground. Every other effect color (rain, fire, sparks, beams) becomes the closest theme color in OKLab, a perceptual color space, so each effect keeps its character. Colors are read from the theme each time an effect starts, so a theme switch shows up on the next effect. It shares the effect toggles, frame rate and mouse setting with Omarchy's own.
 - **Switch Omarchy's effects on and off.** Omarchy's screensaver picks a random [ttfx](https://github.com/omacom/ttfx) effect each round. Click an effect to take it out of the rotation or put it back. Right-click an effect to play only that one. Effects come from your installed ttfx, so new ones appear automatically.
 - **Live previews.** Move the mouse or the keyboard cursor onto a screensaver or an effect, and a small preview window runs it beside the panel. The preview closes when you close the panel.
 - **Timing.** Set how long the computer is idle before the screensaver starts, and the frame rate of Omarchy's effects.
@@ -69,6 +70,7 @@ The two buttons at the bottom right of the panel are:
 screensaver-manager status              # what's selected, and how many effects are on
 screensaver-manager list                # every screensaver, installed or not
 screensaver-manager select cmatrix      # use cmatrix
+screensaver-manager select omarchy-theme  # Omarchy's screensaver in your theme's colors
 screensaver-manager effects off burn    # take an effect out of the rotation
 screensaver-manager effects only matrix # play only the matrix effect
 screensaver-manager effects all         # every effect back on
@@ -104,6 +106,7 @@ Omarchy's own toggle (*Trigger > Toggle > Screensaver*, or the switch in the pan
 | Idle timeout | `idle.screensaver` in `~/.config/omarchy/shell.json` (Omarchy's own setting) |
 | On/off | `~/.local/state/omarchy/toggles/screensaver-off` (Omarchy's own toggle) |
 | Text the effects draw | `~/.config/omarchy/branding/screensaver.txt` (edit it in *Style > Screensaver*) |
+| Theme Match colors | `~/.local/state/omarchy/current/theme/colors.toml` (the active theme; read only) |
 
 ### Known limits
 

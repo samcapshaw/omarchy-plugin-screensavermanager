@@ -48,4 +48,8 @@ assert.strictEqual(M.heroMeta({ selected: "cmatrix", selectedName: "cmatrix", se
 assert.strictEqual(M.heroMeta({ selected: "cmatrix", screensaverEnabled: false }), "Turned off")
 assert.ok(M.saverGlyph(savers[0]).length > 0)
 
+assert.ok(M.isOmarchy("omarchy") && M.isOmarchy("omarchy-theme") && !M.isOmarchy("cmatrix"))
+assert.strictEqual(M.heroMeta({ selected: "omarchy-theme", selectedName: "Omarchy (Theme Match)", effectsTotal: 37, effectsEnabled: 37, screensaverEnabled: true }), "Omarchy (Theme Match) · all effects")
+assert.notStrictEqual(M.saverGlyph({ id: "omarchy-theme", kind: "omarchy" }), M.saverGlyph(savers[0]))
+
 console.log("model tests passed")

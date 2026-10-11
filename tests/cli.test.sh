@@ -108,6 +108,28 @@ fi
 check "uninstalled savers offer no removal" [ "$("$CLI" list --json | jq '[.[] | select(.kind == "catalog" and (.installed | not) and .uninstall != null)] | length')" = 0 ]
 check "removal goes through pacman" [ "$("$CLI" list --json | jq '[.[] | select(.uninstall != null and (.uninstall | startswith("sudo pacman -Rns ") | not))] | length')" = 0 ]
 
+# Theme Match: colors come from the active theme's colors.toml.
+theme="$HOME/.local/state/omarchy/current/theme"
+mkdir -p "$theme"
+cat >"$theme/colors.toml" <<'TOML'
+accent = "#ff8800"
+foreground = "#eeeeee"
+background = "#101010"
+cyan = "#00cccc"
+red = "#cc2222"
+green = "#22aa22"
+selection = "#123456"
+TOML
+check "theme match is listed" [ "$("$CLI" list --json | jq -r '.[] | select(.id == "omarchy-theme") | .kind')" = omarchy ]
+"$CLI" select omarchy-theme
+check "theme match can be selected" [ "$(json .selected)" = omarchy-theme ]
+check "theme match is managed" "$CLI" managed
+opts=$(bash -c 'source <(sed -n "/^theme_palette()/,/^}$/p;/^theme_effect_options()/,/^}$/p" "$1"); THEME_COLORS=$2; theme_effect_options matrix' _ "$CLI" "$theme/colors.toml")
+check "final gradient uses accent then foreground" grep -qx -- "--final-gradient-stops ff8800 eeeeee" <<<"$opts"
+check "every themed color is a theme color" bash -c '! grep -oE "[0-9a-f]{6}" <<<"$1" | grep -vxE "ff8800|eeeeee|101010|00cccc|cc2222|22aa22"' _ "$opts"
+check "UI tints are never used" bash -c '! grep -q 123456 <<<"$1"' _ "$opts"
+"$CLI" select omarchy
+
 # A broken config file reads as defaults rather than failing.
 echo "not json" >"$XDG_CONFIG_HOME/omarchy/screensaver-manager.json"
 check "broken config reads as defaults" [ "$(json .selected)" = omarchy ]

@@ -42,7 +42,9 @@ Panel {
   property bool showMissing: false
   property bool addingCustom: false
 
-  readonly property var navKeys: Model.navKeys(installedSavers, catalogSavers, showMissing, selected === "omarchy" ? effects : [])
+  // Both Omarchy screensavers (stock colors and Theme Match) share the effects.
+  readonly property bool omarchySelected: Model.isOmarchy(selected)
+  readonly property var navKeys: Model.navKeys(installedSavers, catalogSavers, showMissing, omarchySelected ? effects : [])
 
   function moveCursor(delta) {
     if (!cursorActive) {
@@ -98,7 +100,7 @@ Panel {
     if (!service || !opened || !cursorActive) return
     var parsed = Model.parseKey(cursorKey)
     if (parsed.type === "saver") service.preview(parsed.id, "", previewGeometry())
-    else if (parsed.type === "effect") service.preview("omarchy", parsed.id, previewGeometry())
+    else if (parsed.type === "effect") service.preview(omarchySelected ? selected : "omarchy", parsed.id, previewGeometry())
   }
 
   onCursorKeyChanged: previewTimer.restart()
@@ -392,12 +394,12 @@ Panel {
 
           // ---------- Effects ----------
           PanelSeparator {
-            visible: root.selected === "omarchy"
+            visible: root.omarchySelected
             foreground: root.fg
           }
 
           Column {
-            visible: root.selected === "omarchy"
+            visible: root.omarchySelected
             width: parent.width
             spacing: Style.space(8)
 
@@ -575,7 +577,7 @@ Panel {
             }
 
             Item {
-              visible: root.selected === "omarchy"
+              visible: root.omarchySelected
               width: parent.width
               implicitHeight: fpsRow.implicitHeight
 

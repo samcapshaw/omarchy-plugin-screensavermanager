@@ -22,6 +22,7 @@ CONFIG="${SSM_CONFIG:-$CONFIG_HOME/omarchy/screensaver-manager.json}"
 BRANDING="$CONFIG_HOME/omarchy/branding/screensaver.txt"
 OMARCHY_PATH="${OMARCHY_PATH:-$HOME/.local/share/omarchy}"
 TOGGLE_OFF="$HOME/.local/state/omarchy/toggles/screensaver-off"
+THEME_COLORS="$HOME/.local/state/omarchy/current/theme/colors.toml"
 MENU_FILE="$CONFIG_HOME/omarchy/extensions/omarchy-menu.jsonc"
 CLI_LINK="$HOME/.local/bin/screensaver-manager"
 
@@ -99,6 +100,89 @@ valid_effect() {
   all_effects | grep -qxF -- "$1"
 }
 
+# ------------------------------------------------------------- theme match
+
+# The active theme's colors as "name hex" lines, from Omarchy's colors.toml.
+theme_palette() {
+  [[ -r $THEME_COLORS ]] || return 1
+  sed -nE 's/^[[:space:]]*([a-z_]+)[[:space:]]*=[[:space:]]*"#?([0-9a-fA-F]{6})".*/\1 \2/p' "$THEME_COLORS"
+}
+
+theme_color() {
+  theme_palette | awk -v k="$1" '$1 == k { print $2; exit }'
+}
+
+# The color options of one ttfx effect, rewritten in the active theme's colors,
+# one "--option color..." line each. The options and their default colors come
+# from the effect's own help, so new effects are covered without an update.
+#
+# The colors the text settles into (final-gradient-stops) become a ramp of the
+# theme's accent, cyan and foreground. Every other color (rain, sparks, fire,
+# beams...) becomes the theme color nearest to it in OKLab, so each effect
+# keeps its character (fire stays warm, rain stays cool) in the theme's palette.
+theme_effect_options() {
+  local effect=$1 palette
+  palette=$(theme_palette) || return 1
+  ttfx "$effect" --help 2>/dev/null | awk -v palette="$palette" '
+    function lin(c) { c = c / 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ^ 2.4 }
+    function cbrt(x) { return x <= 0 ? 0 : exp(log(x) / 3) }
+    function oklab(hex, out,   r, g, b, l, m, s) {
+      r = lin(strtonum("0x" substr(hex, 1, 2)))
+      g = lin(strtonum("0x" substr(hex, 3, 2)))
+      b = lin(strtonum("0x" substr(hex, 5, 2)))
+      l = cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+      m = cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+      s = cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+      out["L"] = 0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s
+      out["a"] = 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s
+      out["b"] = 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s
+    }
+    function nearest(hex,   want, have, best, bestd, k, d) {
+      oklab(hex, want)
+      bestd = -1
+      for (k = 1; k <= n; k++) {
+        oklab(hexes[k], have)
+        d = (want["L"] - have["L"]) ^ 2 + (want["a"] - have["a"]) ^ 2 + (want["b"] - have["b"]) ^ 2
+        if (bestd < 0 || d < bestd) { bestd = d; best = hexes[k] }
+      }
+      return best
+    }
+    BEGIN {
+      split(palette, lines, "\n")
+      for (i in lines) {
+        split(lines[i], kv, " ")
+        if (kv[2] == "") continue
+        color[kv[1]] = kv[2]
+        # selection and muted are UI tints, not colors to paint text with.
+        if (kv[1] != "selection" && kv[1] != "muted") hexes[++n] = kv[2]
+      }
+      fg = color["foreground"]; accent = color["accent"] ? color["accent"] : fg
+      cyan = color["cyan"] ? color["cyan"] : fg
+      ramp[1] = accent; ramp[2] = cyan; ramp[3] = fg
+      split("red yellow green blue magenta bright_red bright_yellow bright_green", extra, " ")
+    }
+    /^ +--[a-z-]+ </ { opt = $1; next }
+    opt != "" && /\[default:/ {
+      d = $0; sub(/.*\[default: /, "", d); sub(/\].*/, "", d)
+      count = split(d, defaults, " ")
+      for (i = 1; i <= count; i++) if (defaults[i] !~ /^[0-9a-fA-F]{6}$/) { opt = ""; next }
+      line = opt
+      for (i = 1; i <= count; i++) {
+        if (opt == "--final-gradient-stops") {
+          if (count == 1) c = fg
+          else if (count == 2) c = (i == 1 ? accent : fg)
+          else if (i <= 3) c = ramp[i]
+          else c = color[extra[i - 3]] ? color[extra[i - 3]] : fg
+        } else {
+          c = nearest(defaults[i])
+        }
+        line = line " " c
+      }
+      print line
+      opt = ""
+    }'
+}
+
 # ------------------------------------------------------------------ savers
 
 installed_bin() {
@@ -143,6 +227,8 @@ savers_json() {
     def install_cmd: if .repo == "aur" then "yay -S --needed \(.package)" else "sudo pacman -S --needed \(.package)" end;
     [
       {id: "omarchy", name: "Omarchy", description: "Text effects over your screensaver branding",
+       kind: "omarchy", installed: true, command: "ttfx"},
+      {id: "omarchy-theme", name: "Omarchy (Theme Match)", description: "The same effects, in your theme'"'"'s colors",
        kind: "omarchy", installed: true, command: "ttfx"}
     ]
     + [$catalog[0].savers[] | {id, name, description, kind: "catalog",
@@ -224,7 +310,14 @@ run_saver() {
     saver=$(saver_json omarchy)
   fi
 
-  printf '\033]11;rgb:00/00/00\007'
+  # Theme Match paints on the theme's background; everything else on black,
+  # as Omarchy's own screensaver does.
+  local background=000000
+  if [[ $id == omarchy-theme ]]; then
+    background=$(theme_color background) || true
+    [[ $background =~ ^[0-9a-fA-F]{6}$ ]] || background=000000
+  fi
+  printf '\033]11;rgb:%s/%s/%s\007' "${background:0:2}" "${background:2:2}" "${background:4:2}"
   printf '\033[?25l'
 
   child=""
@@ -280,18 +373,31 @@ run_saver() {
     [[ -r $input ]] || input="$OMARCHY_PATH/logo.txt"
     args=(-i "$input" --frame-rate "$frame_rate" --canvas-width 0 --canvas-height 0 --reuse-canvas
       --anchor-canvas c --anchor-text c --no-eol --no-restore-cursor)
-    if [[ -n $effect ]]; then
-      valid_effect "$effect" || die "unknown effect: $effect"
+    [[ -z $effect ]] || valid_effect "$effect" || die "unknown effect: $effect"
+    mapfile -t effects < <(enabled_effects)
+    ((${#effects[@]})) || mapfile -t effects < <(all_effects)
+    if [[ $id == omarchy-theme ]]; then
+      # Colors are options of each effect, so this variant picks the effect
+      # itself rather than leaving it to --random-effect.
+      args+=(--terminal-background-color "$background")
+    elif [[ -n $effect ]]; then
       args+=("$effect")
     else
-      mapfile -t effects < <(enabled_effects)
-      ((${#effects[@]})) || mapfile -t effects < <(all_effects)
       args+=(--random-effect --include-effects "${effects[@]}")
     fi
   fi
 
+  local pick theme_args=() line
   while true; do
-    if [[ $kind == omarchy ]]; then
+    if [[ $id == omarchy-theme ]]; then
+      pick=${effect:-${effects[RANDOM % ${#effects[@]}]}}
+      theme_args=()
+      while IFS= read -r line; do
+        # shellcheck disable=SC2206
+        theme_args+=($line)
+      done < <(theme_effect_options "$pick")
+      ttfx "${args[@]}" "$pick" "${theme_args[@]}" &
+    elif [[ $kind == omarchy ]]; then
       ttfx "${args[@]}" &
     else
       # The screensaver gets no stdin, so every key press lands here and

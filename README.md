@@ -10,6 +10,7 @@ Choose the screensaver Omarchy starts when your computer goes idle. You can keep
 - **Switch Omarchy's effects on and off.** Omarchy's screensaver picks a random [ttfx](https://github.com/omacom/ttfx) effect each round. Click an effect to take it out of the rotation or put it back. Right-click an effect to play only that one. Effects come from your installed ttfx, so new ones appear automatically.
 - **Live previews.** Move the mouse or the keyboard cursor onto a screensaver or an effect, and a small preview window runs it beside the panel. The preview closes when you close the panel.
 - **Timing.** Set how long the computer is idle before the screensaver starts, and the frame rate of Omarchy's effects.
+- **Dismiss on mouse movement.** Omarchy's own screensaver only closes on a key press, or when it loses focus to another monitor. With this on (the default), moving the mouse or trackpad closes it too.
 - **Get more screensavers.** The panel lists known terminal screensavers you don't have yet. Click one to open a terminal with its install command, which you confirm yourself. The plugin never installs anything on its own.
 - **Start now.** Starts the screensaver straight away. You can also right-click the bar icon.
 - **Omarchy menu and a terminal command (optional).** One button adds the panel to the Omarchy menu, and another installs a `screensaver-manager` command. Both are off until you turn them on.
@@ -72,6 +73,7 @@ screensaver-manager effects off burn    # take an effect out of the rotation
 screensaver-manager effects only matrix # play only the matrix effect
 screensaver-manager effects all         # every effect back on
 screensaver-manager framerate 60
+screensaver-manager mouse off           # only a key press dismisses it
 screensaver-manager custom add "Clock" "tty-clock -c -C 4"
 screensaver-manager launch              # start it now
 screensaver-manager preview cmatrix     # small live preview (preview stop closes it)
@@ -86,7 +88,9 @@ Omarchy's idle service starts the screensaver by running `omarchy-launch-screens
 
 The plugin's screensaver windows use Omarchy's own window class (`org.omarchy.screensaver`), terminals and terminal configs. They go fullscreen on every monitor, and they close on a key press or when they lose focus. The idle service treats them as its own: the lock still follows at your lock timeout, and closing the screensaver still counts as activity.
 
-If you choose Omarchy's screensaver with every effect on and the default 120 fps, the plugin does nothing at idle and Omarchy's launcher runs as usual. If a screensaver you chose is uninstalled later, Omarchy's screensaver runs instead.
+To dismiss on mouse movement, the screensaver's terminal reports pointer movement as input, the same way a key press arrives. Tracking starts a second after the screensaver appears, so the pointer settling onto the new window doesn't close it.
+
+If you choose Omarchy's screensaver with every effect on, the default 120 fps and mouse dismissal off, the plugin does nothing at idle and Omarchy's launcher runs as usual. If a screensaver you chose is uninstalled later, Omarchy's screensaver runs instead.
 
 Changing the idle timeout normally needs a shell restart. Omarchy's idle service only updates its idle monitor's timeout, and Quickshell's idle monitor keeps the timeout it was started with until it's re-armed. While this plugin is enabled, its service re-arms the monitor whenever the timeout changes, whether from the panel, PowerCore or a hand edit of `shell.json`.
 
@@ -96,7 +100,7 @@ Omarchy's own toggle (*Trigger > Toggle > Screensaver*, or the switch in the pan
 
 | What | Where |
 |---|---|
-| Your choices (screensaver, effects that are off, frame rate, custom commands) | `~/.config/omarchy/screensaver-manager.json` |
+| Your choices (screensaver, effects that are off, frame rate, mouse dismissal, custom commands) | `~/.config/omarchy/screensaver-manager.json` |
 | Idle timeout | `idle.screensaver` in `~/.config/omarchy/shell.json` (Omarchy's own setting) |
 | On/off | `~/.local/state/omarchy/toggles/screensaver-off` (Omarchy's own toggle) |
 | Text the effects draw | `~/.config/omarchy/branding/screensaver.txt` (edit it in *Style > Screensaver*) |

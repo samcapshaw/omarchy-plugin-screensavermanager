@@ -49,7 +49,6 @@ config() { jq -r "$1" "$XDG_CONFIG_HOME/omarchy/screensaver-manager.json"; }
 
 # Defaults: the stock screensaver, nothing managed.
 check "default selection" [ "$(json .selected)" = omarchy ]
-refute "stock setup is not managed" "$CLI" managed
 check "effects come from ttfx" [ "$(json .effectsTotal)" -gt 10 ]
 check "all effects on by default" [ "$(json .effectsEnabled)" = "$(json .effectsTotal)" ]
 
@@ -74,6 +73,17 @@ check "frame rate" [ "$(json .frameRate)" = 60 ]
 check "frame rate makes it managed" "$CLI" managed
 refute "silly frame rate is refused" "$CLI" framerate 5000 2>/dev/null
 "$CLI" framerate 120
+
+# Mouse movement dismisses by default, and that alone makes it managed,
+# since Omarchy's own screensaver ignores the mouse.
+check "mouse dismiss on by default" [ "$(json .dismissOnMouse)" = true ]
+check "mouse dismiss makes it managed" "$CLI" managed
+"$CLI" mouse off
+check "mouse off" [ "$(json .dismissOnMouse)" = false ]
+refute "stock setup with mouse off is not managed" "$CLI" managed
+"$CLI" mouse on
+check "mouse on" [ "$(json .dismissOnMouse)" = true ]
+refute "bad mouse value is refused" "$CLI" mouse maybe 2>/dev/null
 
 # Custom commands.
 id=$("$CLI" custom add "Big Clock" "tty-clock -c")

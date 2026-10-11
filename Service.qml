@@ -38,6 +38,7 @@ Item {
   readonly property bool managed: state.managed === true
   readonly property bool screensaverEnabled: state.screensaverEnabled !== false
   readonly property int frameRate: state.frameRate || 120
+  readonly property bool dismissOnMouse: state.dismissOnMouse !== false
 
   readonly property var idleService: shell && typeof shell.serviceFor === "function" ? shell.serviceFor("omarchy.idle") : null
   readonly property int idleTimeout: idleService ? idleService.screensaverTimeoutSeconds : 150
@@ -81,6 +82,7 @@ Item {
   function allEffects() { run(["effects", "all"]) }
   function onlyEffect(name) { run(["effects", "only", name]) }
   function setFrameRate(fps) { run(["framerate", String(Math.round(fps))]) }
+  function setDismissOnMouse(on) { run(["mouse", on ? "on" : "off"]) }
   function addCustom(name, command) { run(["custom", "add", name, command]) }
   function removeCustom(id) { run(["custom", "remove", id]) }
   function setMenu(on) { run(["menu", on ? "install" : "remove"]) }

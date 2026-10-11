@@ -538,6 +538,29 @@ Panel {
             }
 
             Item {
+              width: parent.width
+              implicitHeight: mouseSwitch.implicitHeight
+
+              Text {
+                textFormat: Text.PlainText
+                text: "Dismiss on mouse movement"
+                color: root.fg
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+              }
+
+              ToggleSwitch {
+                id: mouseSwitch
+                anchors.right: parent.right
+                checked: root.service ? root.service.dismissOnMouse : true
+                foreground: root.fg
+                onToggled: if (root.service) root.service.setDismissOnMouse(!checked)
+              }
+            }
+
+            Item {
               visible: root.selected === "omarchy"
               width: parent.width
               implicitHeight: fpsRow.implicitHeight

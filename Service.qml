@@ -146,6 +146,7 @@ Item {
     target: root.idleService
     ignoreUnknownSignals: true
     function onScreensaverStartedThisCycleChanged() {
+      if (root.idleService.screensaverCommandManaged === true) return
       if (!root.idleService.screensaverStartedThisCycle) return
       if (!root.managed || idleProc.running) return
       idleProc.running = true
